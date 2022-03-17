@@ -11,18 +11,19 @@ import (
 )
 
 type RedisConnection struct {
-	Connexion int
-	Port      int
-	Duration  int
-	Host      string
-	Password  string
+	MaxConnection int
+	MaxParallel   int
+	Port          int
+	Duration      int
+	Host          string
+	Password      string
 }
 
 var rdconnection = RedisConnection{}
 
 var getCmd = &cobra.Command{
 	Use:   "ping",
-	Short: "ping pong redis",
+	Short: "open connection to redis",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return chaos(rdconnection)
 
@@ -31,7 +32,8 @@ var getCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(getCmd)
-	getCmd.PersistentFlags().IntVarP(&rdconnection.Connexion, "connection", "c", 1, "number of simulated connections")
+	getCmd.PersistentFlags().IntVarP(&rdconnection.MaxConnection, "max-connection", "c", 0, "Max Active connection, by default unlimited")
+	getCmd.PersistentFlags().IntVarP(&rdconnection.MaxParallel, "max-parallel", "w", 10, "Max Go routine in parallel")
 	getCmd.PersistentFlags().IntVarP(&rdconnection.Port, "port", "P", 6379, "redis port")
 	getCmd.PersistentFlags().IntVarP(&rdconnection.Duration, "duration", "d", 300, "chaos duration")
 	getCmd.PersistentFlags().StringVar(&rdconnection.Host, "host", "localhost", "redis host")
@@ -44,7 +46,7 @@ func initPool(r RedisConnection) {
 	adresse := fmt.Sprintf("%s:%v", r.Host, r.Port)
 	pool = &redis.Pool{
 		MaxIdle:         80,
-		MaxActive:       r.Connexion,
+		MaxActive:       r.MaxConnection,
 		MaxConnLifetime: 0,
 		Dial: func() (redis.Conn, error) {
 			conn, err := redis.Dial("tcp", adresse)
@@ -60,30 +62,31 @@ func initPool(r RedisConnection) {
 func chaos(r RedisConnection) error {
 	initPool(r)
 	i := 1
-	for i <= r.Connexion {
-		go ping()
-		//fmt.Printf("number in for %v \n", i)
-		//time.Sleep(time.Duration(r.Duration) * time.Second)
+	for i <= r.MaxParallel {
+		go getPool()
 		i += 1
 
 	}
 	time.Sleep(1 * time.Second)
-	fmt.Printf("active connection %v \n", pool.ActiveCount())
+	go countConexion()
 	time.Sleep(time.Duration(r.Duration) * time.Second)
 	return nil
 }
 
-func ping() error {
-	conn := pool.Get()
-	//defer conn.Close()
-	//fmt.Printf("active connection %v \n", pool.ActiveCount())
+// Print every 30s number of active connection
+func countConexion() {
 	for {
-		s, err := redis.String(conn.Do("PING"))
-		fmt.Printf("%v", s)
-		if err != nil {
-			log.Printf("ERROR: fail ping redis, error %s", err.Error())
-			return err
-		}
+		s := pool.Stats()
+		fmt.Printf("active connection %v \n",s.ActiveCount)
+		fmt.Printf("idle connection %v \n", s.IdleCount)
+		fmt.Printf("wait connection %v \n", s.WaitCount)
+		time.Sleep(30 * time.Second)
 	}
+}
 
+// Open a new connection
+func getPool() error {
+	for {
+		pool.Get()
+	}
 }
